@@ -1,2 +1,4 @@
-neat-python
-pygame
+neat-python==0.92
+pygame==2.5.2
+matplotlib==3.7.2
+numpy==1.24.3

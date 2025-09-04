@@ -1,167 +1,272 @@
-# https://neat-python.readthedocs.io/en/latest/xor_example.html
-from pong import Game
-import pygame
-import neat
+#!/usr/bin/env python3
+import argparse
 import os
+import sys
+import threading
 import time
-import pickle
 
+                                  
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
-class PongGame:
-    def __init__(self, window, width, height):
-        self.game = Game(window, width, height)
-        self.ball = self.game.ball
-        self.left_paddle = self.game.left_paddle
-        self.right_paddle = self.game.right_paddle
+from neat_pong.training.trainer import NEATTrainer
+from neat_pong.visualization.dashboard import VisualizationDashboard
+from neat_pong.config.parameters import TrainingConfig
+from neat_pong.game.game import PongGame
+from neat_pong.training.agent import PongAgent
+import neat
 
-    def test_ai(self, net):
-        """
-        Test the AI against a human player by passing a NEAT neural network
-        """
-        clock = pygame.time.Clock()
-        run = True
-        while run:
-            clock.tick(60)
-            game_info = self.game.loop()
-
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    run = False
+class NEATPongApp:
+    def __init__(self):
+        self.config_path = "src/neat_pong/config/config.txt"
+        self.trainer = None
+        self.dashboard = None
+        self.training_thread = None
+        self.training_active = False
+        
+    def setup_trainer(self, checkpoint_path=None):
+        self.trainer = NEATTrainer(self.config_path, checkpoint_path)
+        
+    def setup_visualization(self):
+        self.dashboard = VisualizationDashboard()
+        if self.trainer:
+            self.trainer.set_visualization_callback(self.dashboard.update_visualization)
+    
+    def train_with_visualization(self, generations, show_training):
+        def training_worker():
+            self.training_active = True
+            try:
+                print(f"🚀 Starting NEAT training (Population: 1000)...")
+                print("📊 Training will run continuously until you stop it")
+                print("🎮 Controls:")
+                print("   SPACE - Toggle normal/fast speed")
+                print("   ESC/Q - Stop training and save best model")
+                print("⚡ No early stopping - train as long as you want!")
+                
+                winner = self.trainer.train(10000)                    
+                print(f"\\nTraining completed! Best genome fitness: {winner.fitness}")
+                
+            except Exception as e:
+                print(f"Training error: {e}")
+            finally:
+                self.training_active = False
+        
+        if show_training:
+            self.setup_visualization()
+            self.training_thread = threading.Thread(target=training_worker, daemon=True)
+            self.training_thread.start()
+            
+                                         
+            while self.dashboard.running and self.training_active:
+                if not self.dashboard.run_frame():
                     break
-
-            output = net.activate((self.right_paddle.y, abs(
-                self.right_paddle.x - self.ball.x), self.ball.y))
-            decision = output.index(max(output))
-
-            if decision == 1:  # AI moves up
-                self.game.move_paddle(left=False, up=True)
-            elif decision == 2:  # AI moves down
-                self.game.move_paddle(left=False, up=False)
-
-            keys = pygame.key.get_pressed()
-            if keys[pygame.K_w]:
-                self.game.move_paddle(left=True, up=True)
-            elif keys[pygame.K_s]:
-                self.game.move_paddle(left=True, up=False)
-
-            self.game.draw(draw_score=True)
-            pygame.display.update()
-
-    def train_ai(self, genome1, genome2, config, draw=False):
-        """
-        Train the AI by passing two NEAT neural networks and the NEAt config object.
-        These AI's will play against eachother to determine their fitness.
-        """
-        run = True
-        start_time = time.time()
-
-        net1 = neat.nn.FeedForwardNetwork.create(genome1, config)
-        net2 = neat.nn.FeedForwardNetwork.create(genome2, config)
-        self.genome1 = genome1
-        self.genome2 = genome2
-
-        max_hits = 50
-
-        while run:
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    return True
-
-            game_info = self.game.loop()
-
-            self.move_ai_paddles(net1, net2)
-
-            if draw:
-                self.game.draw(draw_score=False, draw_hits=True)
-
-            pygame.display.update()
-
-            duration = time.time() - start_time
-            if game_info.left_score == 1 or game_info.right_score == 1 or game_info.left_hits >= max_hits:
-                self.calculate_fitness(game_info, duration)
+            
+            print("\\nVisualization stopped.")
+        else:
+                                         
+            training_worker()
+    
+    def train_mode(self, args):
+        print("=== NEAT Pong Training Mode ===")
+        self.setup_trainer()
+        self.train_with_visualization(10000, args.show_training)                                        
+    
+    def continue_mode(self, args):
+        print(f"=== NEAT Pong Continue Training Mode ===")
+        if not os.path.exists(args.checkpoint):
+            print(f"Error: Checkpoint file '{args.checkpoint}' not found!")
+            self.list_available_checkpoints()
+            return
+        
+        print(f"📂 Loading checkpoint: {args.checkpoint}")
+        self.setup_trainer(args.checkpoint)
+        self.train_with_visualization(10000, args.show_training)                                        
+    
+    def list_available_checkpoints(self):
+        print("\n📋 Available checkpoints:")
+        checkpoint_dir = "checkpoints"
+        if os.path.exists(checkpoint_dir):
+            checkpoints = [f for f in os.listdir(checkpoint_dir) if f.startswith("neat-checkpoint-")]
+            if checkpoints:
+                checkpoints.sort(key=lambda x: int(x.split("-")[-1]))
+                for cp in checkpoints:
+                    full_path = os.path.join(checkpoint_dir, cp)
+                    print(f"   - {full_path}")
+                print(f"\nUsage: python main.py --mode continue --checkpoint {os.path.join(checkpoint_dir, checkpoints[-1])}")
+            else:
+                print("   No checkpoints found in checkpoints/ directory")
+        else:
+            print("   checkpoints/ directory not found")
+    
+    def test_mode(self, args):
+        print("=== NEAT Pong Test Mode ===")
+        
+        model_path = args.model or "models/best_genome.pickle"
+        if not os.path.exists(model_path):
+            print(f"Error: Model file '{model_path}' not found!")
+            print("Train a model first using: python main.py --mode train")
+            return
+        
+                            
+        config = neat.Config(
+            neat.DefaultGenome,
+            neat.DefaultReproduction,
+            neat.DefaultSpeciesSet,
+            neat.DefaultStagnation,
+            self.config_path
+        )
+        
+                             
+        import pickle
+        with open(model_path, "rb") as f:
+            genome = pickle.load(f)
+        
+        print(f"Loaded model with fitness: {genome.fitness}")
+        
+                                                                  
+        agent1 = PongAgent(genome, config)
+        agent2 = PongAgent(genome, config)                      
+        
+                                      
+        self.dashboard = VisualizationDashboard()
+        self.dashboard.current_generation = "DEMO"
+        self.dashboard.current_agent1 = agent1
+        self.dashboard.current_agent2 = agent2
+        
+        print("Running AI vs AI demonstration...")
+        print("Press SPACE to toggle speed, ESC to exit")
+        
+        game = PongGame()
+        games_played = 0
+        
+        while self.dashboard.running:
+            if not self.dashboard.run_frame():
                 break
+            
+            if not game.is_game_over():
+                               
+                left_inputs = game.get_ai_inputs("left")
+                right_inputs = game.get_ai_inputs("right")
+                
+                                     
+                left_action = agent1.get_action(left_inputs)
+                right_action = agent2.get_action(right_inputs)
+                
+                             
+                game.update(left_action, right_action)
+                
+                                              
+                self.dashboard.demo_game = game
+            else:
+                games_played += 1
+                print(f"Game {games_played} finished - Winner: {game.get_winner() or 'Tie'}")
+                time.sleep(2)                             
+                game.reset()
+    
+    def benchmark_mode(self, args):
+        print("=== NEAT Pong Benchmark Mode ===")
+        
+        model_path = args.model or "models/best_genome.pickle"
+        if not os.path.exists(model_path):
+            print(f"Error: Model file '{model_path}' not found!")
+            return
+        
+                    
+        config = neat.Config(
+            neat.DefaultGenome,
+            neat.DefaultReproduction,
+            neat.DefaultSpeciesSet,
+            neat.DefaultStagnation,
+            self.config_path
+        )
+        
+        import pickle
+        with open(model_path, "rb") as f:
+            genome = pickle.load(f)
+        
+        agent1 = PongAgent(genome, config)
+        agent2 = PongAgent(genome, config)
+        
+        print(f"Running {args.benchmark_games} benchmark games...")
+        
+        wins_agent1 = 0
+        wins_agent2 = 0
+        ties = 0
+        total_hits = 0
+        
+        for game_num in range(args.benchmark_games):
+            game = PongGame()
+            
+            while not game.is_game_over():
+                left_inputs = game.get_ai_inputs("left")
+                right_inputs = game.get_ai_inputs("right")
+                
+                left_action = agent1.get_action(left_inputs)
+                right_action = agent2.get_action(right_inputs)
+                
+                game.update(left_action, right_action)
+            
+            winner = game.get_winner()
+            if winner == "left":
+                wins_agent1 += 1
+            elif winner == "right":
+                wins_agent2 += 1
+            else:
+                ties += 1
+            
+            total_hits += game.hits
+            
+            if (game_num + 1) % 10 == 0:
+                print(f"Completed {game_num + 1}/{args.benchmark_games} games")
+        
+        print("\\n=== Benchmark Results ===")
+        print(f"Total games: {args.benchmark_games}")
+        print(f"Agent 1 wins: {wins_agent1} ({wins_agent1/args.benchmark_games*100:.1f}%)")
+        print(f"Agent 2 wins: {wins_agent2} ({wins_agent2/args.benchmark_games*100:.1f}%)")
+        print(f"Ties: {ties} ({ties/args.benchmark_games*100:.1f}%)")
+        print(f"Average hits per game: {total_hits/args.benchmark_games:.1f}")
 
-        return False
+def main():
+    parser = argparse.ArgumentParser(description="NEAT Pong - AI Training and Testing")
+    parser.add_argument("--mode", choices=["train", "test", "continue", "benchmark"], 
+                       required=True, help="Mode to run the application")
+    
+                                                           
+    parser.add_argument("--show-training", action="store_true",
+                       help="Show training visualization")
+    
+                                 
+    parser.add_argument("--checkpoint", type=str,
+                       help="Checkpoint file to continue training from")
+    
+                              
+    parser.add_argument("--model", type=str,
+                       help="Model file to test (default: models/best_genome.pickle)")
+    parser.add_argument("--benchmark-games", type=int, default=100,
+                       help="Number of games for benchmark mode")
+    
+    args = parser.parse_args()
+    
+                                                              
+    
+    app = NEATPongApp()
+    
+    try:
+        if args.mode == "train":
+            app.train_mode(args)
+        elif args.mode == "continue":
+            if not args.checkpoint:
+                print("Error: --checkpoint required for continue mode")
+                sys.exit(1)
+            app.continue_mode(args)
+        elif args.mode == "test":
+            app.test_mode(args)
+        elif args.mode == "benchmark":
+            app.benchmark_mode(args)
+    except KeyboardInterrupt:
+        print("\\nApplication interrupted by user")
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
 
-    def move_ai_paddles(self, net1, net2):
-        """
-        Determine where to move the left and the right paddle based on the two 
-        neural networks that control them. 
-        """
-        players = [(self.genome1, net1, self.left_paddle, True), (self.genome2, net2, self.right_paddle, False)]
-        for (genome, net, paddle, left) in players:
-            output = net.activate(
-                (paddle.y, abs(paddle.x - self.ball.x), self.ball.y))
-            decision = output.index(max(output))
-
-            valid = True
-            if decision == 0:  # Don't move
-                genome.fitness -= 0.01  # we want to discourage this
-            elif decision == 1:  # Move up
-                valid = self.game.move_paddle(left=left, up=True)
-            else:  # Move down
-                valid = self.game.move_paddle(left=left, up=False)
-
-            if not valid:  # If the movement makes the paddle go off the screen punish the AI
-                genome.fitness -= 1
-
-    def calculate_fitness(self, game_info, duration):
-        self.genome1.fitness += game_info.left_hits + duration
-        self.genome2.fitness += game_info.right_hits + duration
-
-
-def eval_genomes(genomes, config):
-    """
-    Run each genome against eachother one time to determine the fitness.
-    """
-    width, height = 700, 500
-    win = pygame.display.set_mode((width, height))
-    pygame.display.set_caption("Pong")
-
-    for i, (genome_id1, genome1) in enumerate(genomes):
-        print(round(i/len(genomes) * 100), end=" ")
-        genome1.fitness = 0
-        for genome_id2, genome2 in genomes[min(i+1, len(genomes) - 1):]:
-            genome2.fitness = 0 if genome2.fitness == None else genome2.fitness
-            pong = PongGame(win, width, height)
-
-            force_quit = pong.train_ai(genome1, genome2, config, draw=True)
-            if force_quit:
-                quit()
-
-
-def run_neat(config):
-    #p = neat.Checkpointer.restore_checkpoint('neat-checkpoint-85')
-    p = neat.Population(config)
-    p.add_reporter(neat.StdOutReporter(True))
-    stats = neat.StatisticsReporter()
-    p.add_reporter(stats)
-    p.add_reporter(neat.Checkpointer(1))
-
-    winner = p.run(eval_genomes, 50)
-    with open("best.pickle", "wb") as f:
-        pickle.dump(winner, f)
-
-
-def test_best_network(config):
-    with open("best.pickle", "rb") as f:
-        winner = pickle.load(f)
-    winner_net = neat.nn.FeedForwardNetwork.create(winner, config)
-
-    width, height = 700, 500
-    win = pygame.display.set_mode((width, height))
-    pygame.display.set_caption("Pong")
-    pong = PongGame(win, width, height)
-    pong.test_ai(winner_net)
-
-
-if __name__ == '__main__':
-    local_dir = os.path.dirname(__file__)
-    config_path = os.path.join(local_dir, 'config.txt')
-
-    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
-                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
-                         config_path)
-
-    run_neat(config)
-    test_best_network(config)
+if __name__ == "__main__":
+    main()
