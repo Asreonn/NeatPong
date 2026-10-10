@@ -303,3 +303,36 @@ If you use NeatPong in your research, please cite:
 ---
 
 **NeatPong** - Understanding Neural Networks Through Evolution
+
+## Project State
+
+Status: EXPERIMENT
+Completion: 50
+Last reviewed: 2026-09-22
+Family: neat-games
+Resume cost: low
+
+### Purpose
+
+NEAT ile Pong oynayan ağ. Git'li ilk commit.
+
+### Current state
+
+README ve src/.
+
+### Missing / unfinished
+
+Eğitilmiş genomun durup durmadığı bakılmadı.
+
+### Next action
+
+README'deki eğitim komutunu tekrarlamadan önce kayıtlı genom var mı bak.
+
+### Important files
+
+Registry id `neat-pong`. Source scan: 17 files, about 998 lines, tests=False.
+
+### Related projects
+
+none
+
