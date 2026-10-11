@@ -1,5 +1,7 @@
 # NeatPong
 
+> **Status:** Archived. Learning project started in 2022 (Python, NEAT); my earliest public code. Kept as-is.
+
 A comprehensive NEAT (NeuroEvolution of Augmenting Topologies) implementation for training neural networks to play Pong through evolutionary algorithms. This project serves as an educational and research platform for understanding artificial neural networks, reward systems, and decision-making behaviors in reinforcement learning environments.
 
 ## Project Motivation
